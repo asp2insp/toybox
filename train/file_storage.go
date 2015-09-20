@@ -1,6 +1,8 @@
 package track
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -37,7 +39,7 @@ type FileStorage struct {
 	rootPath     string
 	file         *os.File
 	Capacity     uint64
-	Size         uint32
+	Size         uint64
 	headerMemory mmap.MMap
 	fileMemory   mmap.MMap
 	index        []uint64
@@ -45,19 +47,57 @@ type FileStorage struct {
 
 const _nSize = 8 // sizeof(uint64)
 
+// Create the file storage with the given path and name
 func NewFileStorage(root, id string, capacity uint64) *FileStorage {
 	f := FileStorage{
+		fileId:   id,
 		rootPath: root,
 		Capacity: capacity,
 		Size:     0,
 	}
-	return f.init(id)
+	return f.init()
+}
+
+func Open(root, id string) *FileStorage {
+	store := FileStorage{
+		fileId:   id,
+		rootPath: root,
+	}
+	store.file = open(fname(store.fileId, store.rootPath), os.O_RDWR)
+	// Find the header size
+	var err error
+	capBytes := make([]byte, _nSize)
+	_, err = store.file.Read(capBytes)
+	utils.Check(err)
+	store.Capacity, err = binary.ReadUvarint(bytes.NewBuffer(capBytes))
+	utils.Check(err)
+
+	// Init the header
+	headerSize := (store.Capacity + 2) * _nSize // Size of array + offset table in bytes
+	store.headerMemory, err = mmap.MapRegion(store.file, int(headerSize), mmap.RDWR, 0, 0)
+	utils.Check(err)
+	index := mmapToIndex(store.headerMemory, 0, headerSize)
+	store.index = index[1:]
+
+	// Find the size of the array
+	for i, offset := range index {
+		// Look for the end of our written index
+		if offset == 0 {
+			store.Size = uint64(i - 2) // We're one past the end, and the end is one past size
+			break
+		}
+	}
+	// If we didn't find an end, we're full
+	if store.Size == 0 {
+		store.Size = store.Capacity
+	}
+	_, err = store.file.Seek(int64(store.index[store.Size]), os.SEEK_SET)
+	utils.Check(err)
+	return &store
 }
 
 // STORAGE
-func (store *FileStorage) init(id string) *FileStorage {
-	store.fileId = id
-
+func (store *FileStorage) init() *FileStorage {
 	// Init the header
 	headerSize := (store.Capacity + 2) * _nSize // Size of array + offset table in bytes
 	store.file = open(fname(store.fileId, store.rootPath), os.O_RDWR|os.O_CREATE)
@@ -75,7 +115,7 @@ func (store *FileStorage) init(id string) *FileStorage {
 
 // Write the given message to the storage.
 func (store *FileStorage) WriteMessage(index int, data []byte) error {
-	if uint32(index) != store.Size {
+	if uint64(index) != store.Size {
 		return fmt.Errorf("Out of order message. Expected %d but got %d", store.Size, index)
 	} else if index < 0 || uint64(index) >= store.Capacity {
 		return fmt.Errorf("Index %d out of bounds [0, %d]", index, store.Capacity)
@@ -91,7 +131,7 @@ func (store *FileStorage) WriteMessage(index int, data []byte) error {
 
 // Return a reader pointing to the beginning of the message with the given index
 func (store *FileStorage) ReaderAt(messageIndex int) (io.Reader, error) {
-	if uint32(messageIndex) >= store.Size {
+	if uint64(messageIndex) >= store.Size {
 		return nil, fmt.Errorf("Index %d exceeds available size of %d", messageIndex, store.Size)
 	} else if messageIndex < 0 || uint64(messageIndex) >= store.Capacity {
 		return nil, fmt.Errorf("Index %d out of bounds [0, %d]", messageIndex, store.Capacity)
@@ -101,7 +141,7 @@ func (store *FileStorage) ReaderAt(messageIndex int) (io.Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	n, err := r.Seek(int64(store.index[messageIndex]), os.SEEK_SET)
+	_, err = r.Seek(int64(store.index[messageIndex]), os.SEEK_SET)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +150,7 @@ func (store *FileStorage) ReaderAt(messageIndex int) (io.Reader, error) {
 
 // Return the size in bytes of the message at the given index
 func (store *FileStorage) SizeOf(messageIndex int) (uint64, error) {
-	if uint32(messageIndex) >= store.Size {
+	if uint64(messageIndex) >= store.Size {
 		return 0, fmt.Errorf("Index %d exceeds available size of %d", messageIndex, store.Size)
 	} else if messageIndex < 0 || uint64(messageIndex) >= store.Capacity {
 		return 0, fmt.Errorf("Index %d out of bounds [0, %d]", messageIndex, store.Capacity)

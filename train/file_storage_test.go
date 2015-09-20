@@ -22,7 +22,7 @@ func TestInit(t *testing.T) {
 	}
 
 	testutils.CheckUint64(10, store.Capacity, t)
-	testutils.CheckUint32(0, store.Size, t)
+	testutils.CheckUint64(0, store.Size, t)
 
 	// Test internals
 	testutils.CheckInt(11, len(store.index), t)
@@ -41,9 +41,6 @@ func TestReadWrite(t *testing.T) {
 	testutils.CheckUint64(96, store.index[0], t)
 	testutils.CheckUint64(96+uint64(len(testData)), store.index[1], t)
 
-	err = store.WriteMessage(1, testData[:4])
-	testutils.CheckErr(err, t)
-
 	store.Flush()
 
 	r, err := store.ReaderAt(0)
@@ -60,13 +57,24 @@ func TestReadWrite(t *testing.T) {
 	testutils.CheckByteSlice(testData, temp, t)
 }
 
-func _TestPersistence(t *testing.T) {
+func TestPersistence(t *testing.T) {
 	cleanup()
 	store := NewFileStorage("", "id", 10)
 	store.WriteMessage(0, testData)
 	store.Close()
 
-	store = NewFileStorage("", "id", 10)
+	store = Open("", "id")
+	testutils.CheckUint64(10, store.Capacity, t)
+	testutils.CheckUint64(1, store.Size, t)
+
+	r, err := store.ReaderAt(0)
+	testutils.CheckErr(err, t)
+	temp := make([]byte, len(testData))
+	n1, err := r.Read(temp)
+
+	testutils.CheckInt(len(testData), n1, t)
+	testutils.CheckErr(err, t)
+	testutils.CheckByteSlice(testData, temp, t)
 }
 
 func cleanup() {
