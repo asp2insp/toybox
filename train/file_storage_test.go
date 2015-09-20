@@ -77,6 +77,32 @@ func TestPersistence(t *testing.T) {
 	testutils.CheckByteSlice(testData, temp, t)
 }
 
+func TestFillUp(t *testing.T) {
+	cleanup()
+	store := NewFileStorage("", "id", 10)
+	for i := 0; i < 10; i++ {
+		store.WriteMessage(0, testData)
+	}
+	store.Close()
+
+	store = Open("", "id")
+	testutils.CheckUint64(10, store.Capacity, t)
+	testutils.CheckUint64(10, store.Size, t)
+
+	r, err := store.ReaderAt(0)
+	testutils.CheckErr(err, t)
+	temp := make([]byte, len(testData))
+
+	for i := 0; i < 10; i++ {
+		n1, err := r.Read(temp)
+
+		testutils.CheckInt(len(testData), n1, t)
+		testutils.CheckErr(err, t)
+		testutils.CheckByteSlice(testData, temp, t)
+	}
+	store.Close()
+}
+
 func cleanup() {
 	os.Remove(fname("id", ""))
 }

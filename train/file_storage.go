@@ -16,17 +16,17 @@ import (
 
 // A file storage blob represents a fixed-count array of untyped, unsized blobs on disk.
 // The size of the array must be specified at time of creation,
-// For fast access, the first 4 bytes stores the length, and then the following 8 * (length + 1)
+// For fast access, the first 8 bytes stores the length, and then the following 8 * (length + 1)
 // bytes will be an offset table where each entry's offset is inserted as it is written.
 // Example: a FileStorage with capacity for 100 messages which currently has 1 message of size
 // 40 bytes inserted will have the following structure:
 // Byte Range: Contents
-//      [0-3]: 100
-//     [4-11]: 812        // Offset of the first message is the first byte address after the index
-//    [12-19]: 852        // Next message will begin after first message ends
-//   [20-811]: 0          // Remainder of the index is empty. Index length is 101 uint32s since we store
+//      [0-7]: 100
+//     [8-15]: 816        // Offset of the first message is the first byte address after the index
+//    [16-23]: 856        // Next message will begin after first message ends
+//   [24-815]: 0          // Remainder of the index is empty. Index length is 101 uint32s since we store
 //                        // beginning and end offsets for each message
-//  [812-851]: MESSAGE1
+//  [816-855]: MESSAGE1
 //  Remainder of the file is empty
 //
 //
