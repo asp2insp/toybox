@@ -80,8 +80,10 @@ func TestPersistence(t *testing.T) {
 func TestFillUp(t *testing.T) {
 	cleanup()
 	store := NewFileStorage("", "id", 10)
+	var err error
 	for i := 0; i < 10; i++ {
-		store.WriteMessage(0, testData)
+		err = store.WriteMessage(i, testData)
+		testutils.CheckErr(err, t)
 	}
 	store.Close()
 
