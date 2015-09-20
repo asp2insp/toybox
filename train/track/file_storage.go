@@ -58,6 +58,7 @@ func NewFileStorage(root, id string, capacity uint64) *FileStorage {
 	return f.init()
 }
 
+// Open the file storage with the given path and name
 func Open(root, id string) *FileStorage {
 	store := FileStorage{
 		fileId:   id,
@@ -156,6 +157,10 @@ func (store *FileStorage) SizeOf(messageIndex int) (uint64, error) {
 		return 0, fmt.Errorf("Index %d out of bounds [0, %d]", messageIndex, store.Capacity)
 	}
 	return store.index[messageIndex+1] - store.index[messageIndex], nil
+}
+
+func (store *FileStorage) IsFull() bool {
+	return store.Size == store.Capacity
 }
 
 // Flush any pending writes to disk
