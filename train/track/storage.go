@@ -13,7 +13,7 @@ import (
 // Each file holds CHUNK_SIZE messages, except for the active file which begins empty and grows to hold
 // up to CHUNK_SIZE messages. Messages are stored in their entirety, with their wrapping.
 
-var CHUNK_SIZE = 1000
+var CHUNK_SIZE uint64 = 1000
 
 func getIdGenerator(start uint64) <-chan uint64 {
 	ret := make(chan uint64)
@@ -32,15 +32,17 @@ type Track struct {
 	messageIds <-chan uint64
 	writeChan  chan []byte
 	dataCond   *sync.Cond
+	alive      bool
 }
 
 func NewTrack(root, id string) *Track {
 	t := Track{
 		Id:         id,
 		RootPath:   root,
-		stores:     make([]*FileStorage, 1),
+		stores:     make([]*FileStorage, 0),
 		messageIds: getIdGenerator(0),
 		dataCond:   &sync.Cond{L: &sync.Mutex{}},
+		alive:      true,
 	}
 	t.startWriter()
 	return &t
@@ -56,7 +58,7 @@ func (t *Track) WriteMessage(data []byte) (err error) {
 	return nil
 }
 
-func (t *Track) ReaderAt(offset int) (io.Reader, error) {
+func (t *Track) ReaderAt(offset uint64) (io.Reader, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("Offset out of bounds: %d", offset)
 	}
@@ -67,12 +69,17 @@ func (t *Track) ReaderAt(offset int) (io.Reader, error) {
 	}
 	chunkIndex := offset / CHUNK_SIZE
 	msgIndex := offset % CHUNK_SIZE
-	if chunkIndex < len(t.stores) && uint64(msgIndex) < t.stores[chunkIndex].Size {
+	if chunkIndex < uint64(len(t.stores)) && uint64(msgIndex) < t.stores[chunkIndex].Size {
 		var err error
 		r.currentSub, err = t.stores[chunkIndex].ReaderAt(msgIndex)
 		utils.Check(err)
 	}
 	return r, nil
+}
+
+func (t *Track) Close() {
+
+	close(t.writeChan) // Writer will signal alive = false
 }
 
 func (t *Track) startWriter() {
@@ -81,6 +88,7 @@ func (t *Track) startWriter() {
 		for {
 			msg, more := <-t.writeChan
 			if !more {
+				t.alive = false
 				return
 			}
 			msgId := <-t.messageIds
@@ -102,7 +110,7 @@ func (t *Track) startWriter() {
 // STORAGE READER -- Combines readers from multiple chunked files into a single interface
 type StorageReader struct {
 	parent     *Track
-	Offset     int
+	Offset     uint64
 	currentSub io.Reader
 	mutex      *sync.Mutex
 }
@@ -111,25 +119,26 @@ type StorageReader struct {
 func (sr *StorageReader) Read(p []byte) (n int, err error) {
 	sr.mutex.Lock()
 	defer sr.mutex.Unlock()
+
+	if !sr.parent.alive {
+		return -1, errors.New("EOF")
+	}
+
 	chunkId := sr.Offset / CHUNK_SIZE
 	internalMsgId := uint64(sr.Offset % CHUNK_SIZE)
 
-	needWait := false
 	sr.parent.dataCond.L.Lock()
 	for sr.currentSub == nil ||
-		chunkId >= len(sr.parent.stores) ||
+		chunkId >= uint64(len(sr.parent.stores)) ||
 		internalMsgId >= sr.parent.stores[chunkId].Size {
-		needWait = true
 		// Block for new data
 		sr.parent.dataCond.Wait()
+		sr.handleRollover()
+
 	}
 	sr.parent.dataCond.L.Unlock()
-	if needWait {
-		// Then move to new data
-		sr.handleRollover()
-	}
 	// We have a valid reader, and can read from it
-	nextMsgSize, err := sr.parent.stores[chunkId].SizeOf(int(internalMsgId))
+	nextMsgSize, err := sr.parent.stores[chunkId].SizeOf(internalMsgId)
 	utils.Check(err)
 	target := p[0:nextMsgSize]
 	_, err = sr.currentSub.Read(target)
@@ -143,7 +152,7 @@ func (sr *StorageReader) handleRollover() {
 	didRollOver := sr.Offset%CHUNK_SIZE == 0
 	if didRollOver {
 		// We need to reset the sub reader
-		if sr.Offset/CHUNK_SIZE < len(sr.parent.stores) {
+		if sr.Offset/CHUNK_SIZE < uint64(len(sr.parent.stores)) {
 			// move to the next one
 			var err error
 			sr.currentSub, err = sr.parent.stores[sr.Offset/CHUNK_SIZE].ReaderAt(0)

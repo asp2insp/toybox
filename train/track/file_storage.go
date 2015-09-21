@@ -131,7 +131,7 @@ func (store *FileStorage) WriteMessage(index int, data []byte) error {
 }
 
 // Return a reader pointing to the beginning of the message with the given index
-func (store *FileStorage) ReaderAt(messageIndex int) (io.Reader, error) {
+func (store *FileStorage) ReaderAt(messageIndex uint64) (io.Reader, error) {
 	if uint64(messageIndex) >= store.Size {
 		return nil, fmt.Errorf("Index %d exceeds available size of %d", messageIndex, store.Size)
 	} else if messageIndex < 0 || uint64(messageIndex) >= store.Capacity {
@@ -150,7 +150,7 @@ func (store *FileStorage) ReaderAt(messageIndex int) (io.Reader, error) {
 }
 
 // Return the size in bytes of the message at the given index
-func (store *FileStorage) SizeOf(messageIndex int) (uint64, error) {
+func (store *FileStorage) SizeOf(messageIndex uint64) (uint64, error) {
 	if uint64(messageIndex) >= store.Size {
 		return 0, fmt.Errorf("Index %d exceeds available size of %d", messageIndex, store.Size)
 	} else if messageIndex < 0 || uint64(messageIndex) >= store.Capacity {

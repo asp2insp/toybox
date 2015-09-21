@@ -1,73 +1,65 @@
 package track
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
 	"github.com/asp2insp/go-misc/testutils"
 )
 
-var testData = []byte("0123456789ABCDEF")
-
-func TestInit(t *testing.T) {
+func TestInitTrack(t *testing.T) {
 	cleanupTrack()
-	store := NewFileStorage("", "id", 10)
-	defer store.Close()
+	track := NewTrack("", "id")
+	defer track.Close()
 
-	testutils.CheckString("id", store.fileId, t)
-	testutils.CheckString("", store.rootPath, t)
-
-	if store.file == nil {
-		t.Errorf("No main file opened for %s", fname("id", ""))
-	}
-
-	testutils.CheckUint64(10, store.Capacity, t)
-	testutils.CheckUint64(0, store.Size, t)
-
-	// Test internals
-	testutils.CheckInt(11, len(store.index), t)
+	testutils.CheckString("id", track.Id, t)
+	testutils.CheckString("", track.RootPath, t)
+	testutils.ExpectTrue(track.alive, "Expected track to be alive", t)
 }
 
-func TestReadWrite(t *testing.T) {
+func TestGetReader(t *testing.T) {
 	cleanupTrack()
-	store := NewFileStorage("", "id", 10)
-	defer store.Close()
-	err := store.WriteMessage(0, testData)
+	track := NewTrack("", "id")
+	defer track.Close()
+
+	_, err := track.ReaderAt(0)
 	testutils.CheckErr(err, t)
 
-	// Size = 8 bytes
-	// Index = 8 bytes * 11
-	// Offset of first item should be 96
-	testutils.CheckUint64(96, store.index[0], t)
-	testutils.CheckUint64(96+uint64(len(testData)), store.index[1], t)
-
-	store.Flush()
-
-	r, err := store.ReaderAt(0)
+	// Test that we can ask for a future offset
+	_, err = track.ReaderAt(100)
 	testutils.CheckErr(err, t)
-	s, err := store.SizeOf(0)
+}
+
+func TestReadWriteTrack(t *testing.T) {
+	cleanupTrack()
+	track := NewTrack("", "id")
+	defer track.Close()
+	err := track.WriteMessage(testData)
 	testutils.CheckErr(err, t)
 
-	testutils.CheckUint64(uint64(len(testData)), s, t)
-	temp := make([]byte, len(testData))
+	r, err := track.ReaderAt(0)
+	testutils.CheckErr(err, t)
+
+	temp := make([]byte, 100)
 	n1, err := r.Read(temp)
 
 	testutils.CheckInt(len(testData), n1, t)
 	testutils.CheckErr(err, t)
-	testutils.CheckByteSlice(testData, temp, t)
+	testutils.CheckByteSlice(testData, temp[0:n1], t)
 }
 
-func TestPersistence(t *testing.T) {
+func _TestPersistenceOfTrack(t *testing.T) {
 	cleanupTrack()
-	store := NewFileStorage("", "id", 10)
-	store.WriteMessage(0, testData)
-	store.Close()
+	track := NewFileStorage("", "id", 10)
+	track.WriteMessage(0, testData)
+	track.Close()
 
-	store = Open("", "id")
-	testutils.CheckUint64(10, store.Capacity, t)
-	testutils.CheckUint64(1, store.Size, t)
+	track = Open("", "id")
+	testutils.CheckUint64(10, track.Capacity, t)
+	testutils.CheckUint64(1, track.Size, t)
 
-	r, err := store.ReaderAt(0)
+	r, err := track.ReaderAt(0)
 	testutils.CheckErr(err, t)
 	temp := make([]byte, len(testData))
 	n1, err := r.Read(temp)
@@ -77,35 +69,45 @@ func TestPersistence(t *testing.T) {
 	testutils.CheckByteSlice(testData, temp, t)
 }
 
-func TestFillUp(t *testing.T) {
+func TestFillUpMultipleFiles(t *testing.T) {
 	cleanupTrack()
-	store := NewFileStorage("", "id", 10)
+	track := NewTrack("", "id")
+	defer track.Close()
 	var err error
-	for i := 0; i < 10; i++ {
-		err = store.WriteMessage(i, testData)
+	var i uint64
+	for i = 0; i < 3*CHUNK_SIZE; i++ {
+		err = track.WriteMessage([]byte(fmt.Sprintf("%d", i)))
 		testutils.CheckErr(err, t)
 	}
-	store.Close()
 
-	store = Open("", "id")
-	testutils.CheckUint64(10, store.Capacity, t)
-	testutils.CheckUint64(10, store.Size, t)
-
-	r, err := store.ReaderAt(0)
+	temp := make([]byte, 100)
+	r, err := track.ReaderAt(0)
 	testutils.CheckErr(err, t)
-	temp := make([]byte, len(testData))
-
-	for i := 0; i < 10; i++ {
+	for i = 0; i < 3*CHUNK_SIZE; i++ {
 		n1, err := r.Read(temp)
-
-		testutils.CheckInt(len(testData), n1, t)
 		testutils.CheckErr(err, t)
-		testutils.CheckByteSlice(testData, temp, t)
+		testutils.CheckByteSlice([]byte(fmt.Sprintf("%d", i)), temp[0:n1], t)
 	}
-	store.Close()
+
+	// track = Open("", "id")
+	// testutils.CheckUint64(10, track.Capacity, t)
+	// testutils.CheckUint64(10, track.Size, t)
+
+	// r, err := track.ReaderAt(0)
+	// testutils.CheckErr(err, t)
+	// temp := make([]byte, len(testData))
+
+	// for i := 0; i < 10; i++ {
+	// 	n1, err := r.Read(temp)
+
+	// 	testutils.CheckInt(len(testData), n1, t)
+	// 	testutils.CheckErr(err, t)
+	// 	testutils.CheckByteSlice(testData, temp, t)
+	// }
 }
 
 func cleanupTrack() {
+	os.Remove(fname("id", ""))
 	os.Remove(fname("id0", ""))
 	os.Remove(fname("id1", ""))
 	os.Remove(fname("id2", ""))
