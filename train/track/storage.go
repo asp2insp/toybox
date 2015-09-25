@@ -1,9 +1,12 @@
 package track
 
 import (
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"os"
 	"sync"
 
 	"github.com/asp2insp/go-misc/utils"
@@ -15,36 +18,65 @@ import (
 
 var CHUNK_SIZE uint64 = 1000
 
-func getIdGenerator(start uint64) <-chan uint64 {
-	ret := make(chan uint64)
-	go func() {
-		for i := start; ; i++ {
-			ret <- i
-		}
-	}()
-	return ret
+type Track struct {
+	stores    []*FileStorage
+	Id        string
+	RootPath  string
+	writeChan chan []byte
+	dataCond  *sync.Cond
+	alive     bool
+	metadata  *meta
 }
 
-type Track struct {
-	stores     []*FileStorage
-	Id         string
-	RootPath   string
-	messageIds <-chan uint64
-	writeChan  chan []byte
-	dataCond   *sync.Cond
-	alive      bool
+type meta struct {
+	NextId uint64
 }
 
 func NewTrack(root, id string) *Track {
 	t := Track{
-		Id:         id,
-		RootPath:   root,
-		stores:     make([]*FileStorage, 0),
-		messageIds: getIdGenerator(0),
-		dataCond:   &sync.Cond{L: &sync.Mutex{}},
-		alive:      true,
+		Id:       id,
+		RootPath: root,
+		stores:   make([]*FileStorage, 0),
+		dataCond: &sync.Cond{L: &sync.Mutex{}},
+		alive:    true,
+		metadata: &meta{NextId: 0},
 	}
-	t.startWriter()
+	t.startWriter(0)
+	return &t
+}
+
+func OpenTrack(root, id string) *Track {
+	metaPath := fname(id+"_meta", root)
+	metaFile := open(metaPath, os.O_RDONLY)
+	defer metaFile.Close()
+	decoder := gob.NewDecoder(metaFile)
+	m := &meta{}
+	err := decoder.Decode(m)
+	if err != nil {
+		if err.Error() == "EOF" {
+			m.NextId = 0
+		} else {
+			utils.Check(err)
+		}
+	}
+	numStores := 0
+	if m.NextId != 0 {
+		numStores = int(math.Ceil(float64(m.NextId) / float64(CHUNK_SIZE)))
+	}
+
+	t := Track{
+		Id:       id,
+		RootPath: root,
+		stores:   make([]*FileStorage, numStores),
+		dataCond: &sync.Cond{L: &sync.Mutex{}},
+		alive:    true,
+		metadata: m,
+	}
+	for i := 0; i < numStores; i++ {
+		storeId := fmt.Sprintf("%s%d", t.Id, i)
+		t.stores[i] = Open(root, storeId)
+	}
+	t.startWriter(m.NextId)
 	return &t
 }
 
@@ -78,20 +110,27 @@ func (t *Track) ReaderAt(offset uint64) (io.Reader, error) {
 }
 
 func (t *Track) Close() {
-
+	// TODO handle updating this in failure case, maybe FS scan?
+	metaPath := fname(t.Id+"_meta", t.RootPath)
+	metaFile := open(metaPath, os.O_RDWR|os.O_CREATE)
+	defer metaFile.Close()
+	metaFile.Truncate(0)
+	encoder := gob.NewEncoder(metaFile)
+	err := encoder.Encode(t.metadata)
+	utils.Check(err)
 	close(t.writeChan) // Writer will signal alive = false
 }
 
-func (t *Track) startWriter() {
+func (t *Track) startWriter(startId uint64) {
 	t.writeChan = make(chan []byte, CHUNK_SIZE/100) // Buffer 1% of a chunk
 	go func() {
+		msgId := startId
 		for {
 			msg, more := <-t.writeChan
 			if !more {
 				t.alive = false
 				return
 			}
-			msgId := <-t.messageIds
 			chunkId := msgId / CHUNK_SIZE
 			if chunkId == uint64(len(t.stores)) {
 				storeId := fmt.Sprintf("%s%d", t.Id, chunkId)
@@ -100,6 +139,8 @@ func (t *Track) startWriter() {
 			internalMsgId := int(msgId % CHUNK_SIZE)
 			err := t.stores[chunkId].WriteMessage(internalMsgId, msg)
 			utils.Check(err)
+			msgId++
+			t.metadata.NextId = msgId + 1
 
 			// Tell any waiting routines that there's new data
 			t.dataCond.Broadcast()
@@ -134,7 +175,6 @@ func (sr *StorageReader) Read(p []byte) (n int, err error) {
 		// Block for new data
 		sr.parent.dataCond.Wait()
 		sr.handleRollover()
-
 	}
 	sr.parent.dataCond.L.Unlock()
 	// We have a valid reader, and can read from it
