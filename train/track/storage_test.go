@@ -64,12 +64,11 @@ func TestPersistenceOfTrack(t *testing.T) {
 	}
 	testutils.CheckInt(1, len(track.stores), t)
 	testutils.CheckUint64(2, track.stores[0].Size, t)
-	testutils.CheckUint64(3, track.metadata.NextId, t)
 
 	track.Close()
 
 	track = OpenTrack("", "id")
-	testutils.CheckUint64(3, track.metadata.NextId, t)
+	defer track.Close()
 	testutils.CheckInt(1, len(track.stores), t)
 	testutils.CheckUint64(2, track.stores[0].Size, t)
 
@@ -100,11 +99,16 @@ func TestFillUpMultipleFiles(t *testing.T) {
 	}
 
 	track.Close()
-	for track.alive {
-		time.Sleep(100 * time.Millisecond)
-	}
+	track.WaitForShutdown()
 
 	track = OpenTrack("", "id")
+	defer track.Close()
+
+	testutils.CheckInt(3, len(track.stores), t)
+	for i := 0; i < 3; i++ {
+		testutils.CheckUint64(CHUNK_SIZE, track.stores[i].Size, t)
+		testutils.CheckUint64(CHUNK_SIZE, track.stores[i].Capacity, t)
+	}
 
 	temp := make([]byte, 100)
 	r, err := track.ReaderAt(0)

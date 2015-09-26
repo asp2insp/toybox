@@ -1,8 +1,6 @@
 package track
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -67,11 +65,11 @@ func Open(root, id string) *FileStorage {
 	store.file = open(fname(store.fileId, store.rootPath), os.O_RDWR)
 	// Find the header size
 	var err error
-	capBytes := make([]byte, _nSize)
-	_, err = store.file.Read(capBytes)
+	capMem, err := mmap.MapRegion(store.file, _nSize, mmap.RDWR, 0, 0)
 	utils.Check(err)
-	store.Capacity, err = binary.ReadUvarint(bytes.NewBuffer(capBytes))
-	utils.Check(err)
+	capSlice := mmapToIndex(capMem, 0, uint64(_nSize))
+	store.Capacity = capSlice[0]
+	capMem.Unmap()
 
 	// Init the header
 	headerSize := (store.Capacity + 2) * _nSize // Size of array + offset table in bytes
@@ -201,6 +199,11 @@ func fname(id, root string) string {
 	} else {
 		return filepath.Join(os.TempDir(), id)
 	}
+}
+
+func exists(name string) bool {
+	_, err := os.Stat(name)
+	return !os.IsNotExist(err)
 }
 
 // Cast the []byte represented by the mmapped region

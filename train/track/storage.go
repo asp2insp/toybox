@@ -1,13 +1,11 @@
 package track
 
 import (
-	"encoding/gob"
 	"errors"
 	"fmt"
 	"io"
-	"math"
-	"os"
 	"sync"
+	"time"
 
 	"github.com/asp2insp/go-misc/utils"
 )
@@ -25,11 +23,6 @@ type Track struct {
 	writeChan chan []byte
 	dataCond  *sync.Cond
 	alive     bool
-	metadata  *meta
-}
-
-type meta struct {
-	NextId uint64
 }
 
 func NewTrack(root, id string) *Track {
@@ -39,44 +32,32 @@ func NewTrack(root, id string) *Track {
 		stores:   make([]*FileStorage, 0),
 		dataCond: &sync.Cond{L: &sync.Mutex{}},
 		alive:    true,
-		metadata: &meta{NextId: 0},
 	}
 	t.startWriter(0)
 	return &t
 }
 
 func OpenTrack(root, id string) *Track {
-	metaPath := fname(id+"_meta", root)
-	metaFile := open(metaPath, os.O_RDONLY)
-	defer metaFile.Close()
-	decoder := gob.NewDecoder(metaFile)
-	m := &meta{}
-	err := decoder.Decode(m)
-	if err != nil {
-		if err.Error() == "EOF" {
-			m.NextId = 0
-		} else {
-			utils.Check(err)
-		}
-	}
-	numStores := 0
-	if m.NextId != 0 {
-		numStores = int(math.Ceil(float64(m.NextId) / float64(CHUNK_SIZE)))
-	}
-
 	t := Track{
 		Id:       id,
 		RootPath: root,
-		stores:   make([]*FileStorage, numStores),
+		stores:   make([]*FileStorage, 0),
 		dataCond: &sync.Cond{L: &sync.Mutex{}},
 		alive:    true,
-		metadata: m,
 	}
-	for i := 0; i < numStores; i++ {
+	// find and load all the stores
+	for i := 0; ; i++ {
 		storeId := fmt.Sprintf("%s%d", t.Id, i)
-		t.stores[i] = Open(root, storeId)
+		if !exists(fname(storeId, root)) {
+			break
+		}
+		t.stores = append(t.stores, Open(root, storeId))
 	}
-	t.startWriter(m.NextId)
+	var nextId uint64 = 0
+	if len(t.stores) > 0 {
+		nextId = uint64(len(t.stores))*CHUNK_SIZE + t.stores[len(t.stores)-1].Size
+	}
+	t.startWriter(nextId)
 	return &t
 }
 
@@ -110,15 +91,13 @@ func (t *Track) ReaderAt(offset uint64) (io.Reader, error) {
 }
 
 func (t *Track) Close() {
-	// TODO handle updating this in failure case, maybe FS scan?
-	metaPath := fname(t.Id+"_meta", t.RootPath)
-	metaFile := open(metaPath, os.O_RDWR|os.O_CREATE)
-	defer metaFile.Close()
-	metaFile.Truncate(0)
-	encoder := gob.NewEncoder(metaFile)
-	err := encoder.Encode(t.metadata)
-	utils.Check(err)
 	close(t.writeChan) // Writer will signal alive = false
+}
+
+func (t *Track) WaitForShutdown() {
+	for t.alive {
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (t *Track) startWriter(startId uint64) {
@@ -140,7 +119,6 @@ func (t *Track) startWriter(startId uint64) {
 			err := t.stores[chunkId].WriteMessage(internalMsgId, msg)
 			utils.Check(err)
 			msgId++
-			t.metadata.NextId = msgId + 1
 
 			// Tell any waiting routines that there's new data
 			t.dataCond.Broadcast()
