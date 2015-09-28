@@ -164,7 +164,7 @@ func BenchmarkThroughput(b *testing.B) {
 		var i uint64
 		n := uint64(b.N)
 		for i = 0; i < n; i++ {
-			track.WriteMessage([]byte(fmt.Sprintf("%d", i)))
+			track.WriteMessage([]byte(fmt.Sprintf("%d%d", i)))
 			// track.WriteMessage([]byte("Hello World"))
 		}
 		wg.Done()
