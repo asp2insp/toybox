@@ -71,7 +71,7 @@ func (t *Track) WriteMessage(data []byte) (err error) {
 	return nil
 }
 
-func (t *Track) ReaderAt(offset uint64) (io.Reader, error) {
+func (t *Track) ReaderAt(offset uint64) (io.ReadCloser, error) {
 	if offset < 0 {
 		return nil, fmt.Errorf("Offset out of bounds: %d", offset)
 	}
@@ -112,7 +112,7 @@ func (t *Track) startWriter(startId uint64) {
 			}
 			chunkId := msgId / CHUNK_SIZE
 			if chunkId == uint64(len(t.stores)) {
-				// t.stores[chunkId-1].switchToReadOnly()
+				// t.stores[chunkId-1].switchToReadOnly() // TODO come back to investigate this
 				storeId := fmt.Sprintf("%s%d", t.Id, chunkId)
 				t.stores = append(t.stores, NewFileStorage(t.RootPath, storeId, CHUNK_SIZE))
 			}
@@ -131,7 +131,7 @@ func (t *Track) startWriter(startId uint64) {
 type StorageReader struct {
 	parent     *Track
 	Offset     uint64
-	currentSub io.Reader
+	currentSub io.ReadCloser
 	mutex      *sync.Mutex
 }
 
@@ -172,6 +172,13 @@ func (sr *StorageReader) Read(p []byte) (n int, err error) {
 	return int(nextMsgSize), nil
 }
 
+func (sr *StorageReader) Close() error {
+	if sr.currentSub != nil {
+		return sr.currentSub.Close()
+	}
+	return nil
+}
+
 func (sr *StorageReader) handleRollover() {
 	didRollOver := sr.Offset%CHUNK_SIZE == 0
 	if didRollOver {
@@ -181,10 +188,14 @@ func (sr *StorageReader) handleRollover() {
 			var err error
 			sr.currentSub, err = sr.parent.stores[sr.Offset/CHUNK_SIZE].ReaderAt(0)
 			if err != nil {
+				if sr.currentSub != nil {
+					sr.currentSub.Close()
+				}
 				sr.currentSub = nil
 			}
 		} else {
 			// Otherwise clear it
+			sr.currentSub.Close()
 			sr.currentSub = nil
 		}
 	}
