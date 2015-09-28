@@ -3,10 +3,12 @@ package track
 import (
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/asp2insp/go-misc/testutils"
+	"github.com/asp2insp/go-misc/utils"
 )
 
 func TestInitTrack(t *testing.T) {
@@ -120,9 +122,78 @@ func TestFillUpMultipleFiles(t *testing.T) {
 	}
 }
 
+func TestConcurrentReadWrites(t *testing.T) {
+	cleanupTrack()
+	track := NewTrack("", "id")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		var i uint64
+		for i = 0; i < CHUNK_SIZE; i++ {
+			track.WriteMessage([]byte(fmt.Sprintf("%d", i)))
+		}
+		wg.Done()
+	}()
+
+	go func() {
+		temp := make([]byte, 100)
+		r, _ := track.ReaderAt(0)
+		var i uint64
+		for i = 0; i < CHUNK_SIZE; i++ {
+			n1, err := r.Read(temp)
+			utils.Check(err)
+			testutils.CheckByteSlice([]byte(fmt.Sprintf("%d", i)), temp[0:n1], t)
+		}
+		wg.Done()
+	}()
+
+	wg.Wait()
+}
+
+func BenchmarkThroughput(b *testing.B) {
+	cleanupTrack()
+	b.ResetTimer()
+	track := NewTrack("", "id")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		var i uint64
+		n := uint64(b.N)
+		for i = 0; i < n; i++ {
+			track.WriteMessage([]byte(fmt.Sprintf("%d", i)))
+			// track.WriteMessage([]byte("Hello World"))
+		}
+		wg.Done()
+	}()
+
+	go func() {
+		temp := make([]byte, 100)
+		r, _ := track.ReaderAt(0)
+		n := uint64(b.N)
+		var i uint64
+		for i = 0; i < n; i++ {
+			_, err := r.Read(temp)
+			if err != nil {
+				fmt.Printf("\nErr %v, on message %d/%d\n", err, i, n)
+			}
+			utils.Check(err)
+		}
+		wg.Done()
+	}()
+
+	wg.Wait()
+}
+
 func cleanupTrack() {
-	os.Remove(fname("id", ""))
-	os.Remove(fname("id0", ""))
-	os.Remove(fname("id1", ""))
-	os.Remove(fname("id2", ""))
+	for i := 0; ; i++ {
+		storeId := fmt.Sprintf("id%d", i)
+		if !exists(fname(storeId, "")) {
+			break
+		}
+		os.Remove(fname(storeId, ""))
+	}
 }

@@ -86,12 +86,14 @@ func Open(root, id string) *FileStorage {
 			break
 		}
 	}
-	// If we didn't find an end, we're full
+	// If we didn't find an end, we're full and we'll switch to read-only mode
 	if store.Size == 0 {
 		store.Size = store.Capacity
+		// store.switchToReadOnly()
+	} else {
+		_, err = store.file.Seek(int64(store.index[store.Size]), os.SEEK_SET)
+		utils.Check(err)
 	}
-	_, err = store.file.Seek(int64(store.index[store.Size]), os.SEEK_SET)
-	utils.Check(err)
 	return &store
 }
 
@@ -123,8 +125,8 @@ func (store *FileStorage) WriteMessage(index int, data []byte) error {
 	if err != nil {
 		return err
 	}
-	store.Size++
 	store.index[index+1] = store.index[index] + uint64(len(data))
+	store.Size++
 	return nil
 }
 
@@ -136,7 +138,7 @@ func (store *FileStorage) ReaderAt(messageIndex uint64) (io.Reader, error) {
 		return nil, fmt.Errorf("Index %d out of bounds [0, %d]", messageIndex, store.Capacity)
 	}
 
-	r, err := os.Open(store.file.Name())
+	r, err := os.Open(fname(store.fileId, store.rootPath))
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +156,12 @@ func (store *FileStorage) SizeOf(messageIndex uint64) (uint64, error) {
 	} else if messageIndex < 0 || uint64(messageIndex) >= store.Capacity {
 		return 0, fmt.Errorf("Index %d out of bounds [0, %d]", messageIndex, store.Capacity)
 	}
-	return store.index[messageIndex+1] - store.index[messageIndex], nil
+	top := store.index[messageIndex+1]
+	bottom := store.index[messageIndex]
+	// if bottom > top {
+	// 	return 0, fmt.Errorf("[%s.sizeOf(%d)] Top offset %d less than bottom %d", store.fileId, messageIndex, top, bottom)
+	// }
+	return top - bottom, nil
 }
 
 func (store *FileStorage) IsFull() bool {
@@ -178,6 +185,14 @@ func (store *FileStorage) Close() {
 }
 
 // UTILS
+
+func (store *FileStorage) switchToReadOnly() {
+	index := make([]uint64, 0, store.Capacity)
+	copy(index, store.index)
+	store.index = index
+	store.headerMemory.Unmap()
+	store.file.Close()
+}
 
 // Open the given file with the given flags
 func open(path string, fileFlags int) *os.File {

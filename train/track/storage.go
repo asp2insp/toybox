@@ -112,6 +112,7 @@ func (t *Track) startWriter(startId uint64) {
 			}
 			chunkId := msgId / CHUNK_SIZE
 			if chunkId == uint64(len(t.stores)) {
+				// t.stores[chunkId-1].switchToReadOnly()
 				storeId := fmt.Sprintf("%s%d", t.Id, chunkId)
 				t.stores = append(t.stores, NewFileStorage(t.RootPath, storeId, CHUNK_SIZE))
 			}
@@ -157,7 +158,12 @@ func (sr *StorageReader) Read(p []byte) (n int, err error) {
 	sr.parent.dataCond.L.Unlock()
 	// We have a valid reader, and can read from it
 	nextMsgSize, err := sr.parent.stores[chunkId].SizeOf(internalMsgId)
-	utils.Check(err)
+	if err != nil {
+		return 0, err
+	}
+	if nextMsgSize > uint64(len(p)) {
+		return 0, fmt.Errorf("Message, of size %d, does not fit into available buffer", nextMsgSize)
+	}
 	target := p[0:nextMsgSize]
 	_, err = sr.currentSub.Read(target)
 	utils.Check(err)
@@ -174,7 +180,9 @@ func (sr *StorageReader) handleRollover() {
 			// move to the next one
 			var err error
 			sr.currentSub, err = sr.parent.stores[sr.Offset/CHUNK_SIZE].ReaderAt(0)
-			utils.Check(err)
+			if err != nil {
+				sr.currentSub = nil
+			}
 		} else {
 			// Otherwise clear it
 			sr.currentSub = nil
