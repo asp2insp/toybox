@@ -14,6 +14,7 @@ import (
 // Each file holds CHUNK_SIZE messages, except for the active file which begins empty and grows to hold
 // up to CHUNK_SIZE messages. Messages are stored in their entirety, with their wrapping.
 
+// CHUNK_SIZE is chosen by experimentation. For small messages (~12 bytes) this was the best value
 var CHUNK_SIZE uint64 = 500 * 1000
 
 type Track struct {

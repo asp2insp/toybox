@@ -127,7 +127,7 @@ func TestConcurrentReadWrites(t *testing.T) {
 	track := NewTrack("", "id")
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(5)
 
 	go func() {
 		var i uint64
@@ -137,17 +137,19 @@ func TestConcurrentReadWrites(t *testing.T) {
 		wg.Done()
 	}()
 
-	go func() {
-		temp := make([]byte, 100)
-		r, _ := track.ReaderAt(0)
-		var i uint64
-		for i = 0; i < CHUNK_SIZE; i++ {
-			n1, err := r.Read(temp)
-			utils.Check(err)
-			testutils.CheckByteSlice([]byte(fmt.Sprintf("%d", i)), temp[0:n1], t)
-		}
-		wg.Done()
-	}()
+	for g := 0; g < 4; g++ {
+		go func(start int) {
+			temp := make([]byte, 100)
+			r, _ := track.ReaderAt(uint64(g * CHUNK_SIZE))
+			var i uint64
+			for i = g * CHUNK_SIZE; i < CHUNK_SIZE; i++ {
+				n1, err := r.Read(temp)
+				utils.Check(err)
+				testutils.CheckByteSlice([]byte(fmt.Sprintf("%d", i)), temp[0:n1], t)
+			}
+			wg.Done()
+		}(g)
+	}
 
 	wg.Wait()
 }
