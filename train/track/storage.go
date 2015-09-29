@@ -14,7 +14,8 @@ import (
 // Each file holds CHUNK_SIZE messages, except for the active file which begins empty and grows to hold
 // up to CHUNK_SIZE messages. Messages are stored in their entirety, with their wrapping.
 
-var CHUNK_SIZE uint64 = 500 * 1000
+// var CHUNK_SIZE uint64 = 500 * 1000
+var CHUNK_SIZE uint64 = 1000
 
 type Track struct {
 	stores    []*FileStorage
@@ -112,7 +113,9 @@ func (t *Track) startWriter(startId uint64) {
 			}
 			chunkId := msgId / CHUNK_SIZE
 			if chunkId == uint64(len(t.stores)) {
-				// t.stores[chunkId-1].switchToReadOnly() // TODO come back to investigate this
+				if chunkId > 0 {
+					t.stores[chunkId-1].switchToReadOnly() // Migrate the old chunk to readonly
+				}
 				storeId := fmt.Sprintf("%s%d", t.Id, chunkId)
 				t.stores = append(t.stores, NewFileStorage(t.RootPath, storeId, CHUNK_SIZE))
 			}

@@ -89,7 +89,7 @@ func Open(root, id string) *FileStorage {
 	// If we didn't find an end, we're full and we'll switch to read-only mode
 	if store.Size == 0 {
 		store.Size = store.Capacity
-		// store.switchToReadOnly()
+		store.switchToReadOnly()
 	} else {
 		_, err = store.file.Seek(int64(store.index[store.Size]), os.SEEK_SET)
 		utils.Check(err)
@@ -187,7 +187,7 @@ func (store *FileStorage) Close() {
 // UTILS
 
 func (store *FileStorage) switchToReadOnly() {
-	index := make([]uint64, 0, store.Capacity)
+	index := make([]uint64, store.Capacity+1)
 	copy(index, store.index)
 	store.index = index
 	store.headerMemory.Unmap()
